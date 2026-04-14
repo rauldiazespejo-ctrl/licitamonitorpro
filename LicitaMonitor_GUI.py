@@ -1,8 +1,7 @@
 """
 LICITAMONITOR — Interfaz Gráfica
 ==================================
-Monitor multi-portal de licitaciones industriales.
-Portales: Wherex · Portal Minero
+Monitor de licitaciones industriales — Portal Minero.
 
 Uso:
     python LicitaMonitor_GUI.py           → abre la interfaz gráfica
@@ -50,7 +49,6 @@ C_AMARILLO      = "#B8860B"   # Amarillo oscuro — advertencia
 C_BLANCO        = "#E8F0F8"   # Texto principal
 C_GRIS          = "#5A7A99"   # Texto secundario
 
-C_WHEREX_BADGE  = "#1255A3"
 C_MINERO_BADGE  = "#6B1515"
 
 FONT_TITULO    = ("Segoe UI", 14, "bold")
@@ -143,7 +141,7 @@ class SplashScreen:
                       font=("Segoe UI", 40, "bold"), anchor="center", tags="logo")
         c.create_text(W//2 + 52, 105, text="MONITOR", fill="#4FC3F7",
                       font=("Segoe UI", 24, "bold"), anchor="center", tags="logo")
-        c.create_text(W//2, 148, text="⬡  Wherex · Portal Minero",
+        c.create_text(W//2, 148, text="⬡  Portal Minero",
                       fill="#2A4A6A", font=("Segoe UI", 10), anchor="center", tags="logo")
 
     def _animar(self):
@@ -254,13 +252,12 @@ class LicitaMonitorApp(tk.Tk):
                  fg=C_BLANCO, font=("Segoe UI", 18, "bold")).pack(side="left", pady=14, padx=(18, 0))
         tk.Label(header, text="MONITOR", bg="#091524",
                  fg=C_AZUL_CLARO, font=("Segoe UI", 18, "bold")).pack(side="left", pady=14)
-        tk.Label(header, text="  ·  Soldesp  ·  Monitor multi-portal de licitaciones",
+        tk.Label(header, text="  ·  Soldesp  ·  Monitor de licitaciones industriales",
                  bg="#091524", fg="#2A4A6A", font=("Segoe UI", 9)).pack(side="left", pady=20)
 
-        # Badges de portales
+        # Badge portal
         badge_frame = tk.Frame(header, bg="#091524")
         badge_frame.pack(side="right", padx=18, pady=14)
-        self._badge(badge_frame, "Wherex", C_WHEREX_BADGE)
         self._badge(badge_frame, "Portal Minero", C_MINERO_BADGE)
 
         # ── Body ─────────────────────────────────────────────────────────────
@@ -333,9 +330,6 @@ class LicitaMonitorApp(tk.Tk):
         card = self._card(parent, "Portales activos")
 
         portales_cfg = self.config_data.get("portales", {})
-
-        self.var_wherex = tk.BooleanVar(
-            value=portales_cfg.get("wherex", {}).get("activo", True))
         self.var_minero = tk.BooleanVar(
             value=portales_cfg.get("portal_minero", {}).get("activo", True))
 
@@ -346,8 +340,6 @@ class LicitaMonitorApp(tk.Tk):
                     "activebackground": C_BG_CARD, "activeforeground": C_AZUL_CLARO,
                     "selectcolor": C_BG_INPUT, "relief": "flat", "cursor": "hand2"}
 
-        tk.Checkbutton(row, text="  Wherex", variable=self.var_wherex,
-                       **cb_style).pack(side="left", padx=(0, 16))
         tk.Checkbutton(row, text="  Portal Minero", variable=self.var_minero,
                        **cb_style).pack(side="left")
 
@@ -530,10 +522,9 @@ class LicitaMonitorApp(tk.Tk):
         # Sincronizar portales activos
         if "portales" not in self.config_data:
             self.config_data["portales"] = {}
-        for key, var in [("wherex", self.var_wherex), ("portal_minero", self.var_minero)]:
-            if key not in self.config_data["portales"]:
-                self.config_data["portales"][key] = {}
-            self.config_data["portales"][key]["activo"] = var.get()
+        if "portal_minero" not in self.config_data["portales"]:
+            self.config_data["portales"]["portal_minero"] = {}
+        self.config_data["portales"]["portal_minero"]["activo"] = self.var_minero.get()
 
         base = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
         config_path = base / "config.json"
@@ -551,8 +542,6 @@ class LicitaMonitorApp(tk.Tk):
             return
 
         portales = []
-        if self.var_wherex.get():
-            portales.append("wherex")
         if self.var_minero.get():
             portales.append("portal_minero")
 
