@@ -192,16 +192,22 @@ def _guardar_screenshot(driver, nombre: str, logger) -> None:
 
 def _es_relevante(texto: str, keywords: list) -> bool:
     """Verifica relevancia. Keywords de ≤2 chars usan word boundary para evitar falsos positivos."""
+    return bool(_keywords_encontrados(texto, keywords))
+
+
+def _keywords_encontrados(texto: str, keywords: list) -> str:
+    """Devuelve string con los keywords encontrados en el texto, separados por ' · '."""
     txt = texto.lower()
+    encontrados = []
     for kw in keywords:
         kw_l = kw.lower()
         if len(kw_l) <= 2:
             if re.search(r'\b' + re.escape(kw_l) + r'\b', txt):
-                return True
+                encontrados.append(kw)
         else:
             if kw_l in txt:
-                return True
-    return False
+                encontrados.append(kw)
+    return " · ".join(encontrados)
 
 
 def _dentro_de_ventana(fecha_str: str, horas_atras: int, logger) -> bool:
@@ -262,24 +268,32 @@ class PortalBase(ABC):
 
 # ═══════════════════════════════════════════════════════════════
 # PORTAL: PORTAL MINERO
-# Login:   https://www.portalminero.com/login.action  (Confluence Seraph)
-# Fuente 1: /wp/oportunidades-de-negocios/            (WordPress)
-# Fuente 2: /display/acce/Muro+de+Actividades         (Confluence)
+#
+# Fuente 1 — PÚBLICA (no requiere login):
+#   https://www.portalminero.com/wp/oportunidades-de-negocios/
+#   · 50 artículos WordPress (selector: article, skip primero)
+#   · Cada article: texto "Publicado en Portal Minero el: DD/MM/YYYY\n[Título]"
+#   · Link: <a href="https://www.portalminero.com/pages/viewpage.action?pageId=...">
+#
+# Fuente 2 — REQUIERE LOGIN (Confluence Seraph):
+#   https://www.portalminero.com/display/acce/Muro+de+Actividades
+#   · ~15 elementos .update-item
+#   · Cada item: Título\nactualizando hace X
+#   · Link: <a href="https://www.portalminero.com/pages/viewpage.action?pageId=...">
+#
+# Login: POST a /dologin.action, campos os_username / os_password,
+#        botón input[type='submit'][name='login'] (NO existe #loginButton)
 # ═══════════════════════════════════════════════════════════════
 
 class PortalMinero(PortalBase):
     nombre_portal = "Portal Minero"
     color_badge   = C_BADGE_MINERO
-    tiene_fechas  = False   # ninguna de las dos fuentes tiene columna de fecha fiable
+    tiene_fechas  = True  # Fuente 1 tiene "Publicado en Portal Minero el: DD/MM/YYYY"
 
-    LOGIN_URL  = "https://www.portalminero.com/login.action"
-    BASE_URL   = "https://www.portalminero.com"
-
-    # Las dos fuentes de licitaciones a scrapear
-    FUENTES = [
-        "https://www.portalminero.com/wp/oportunidades-de-negocios/",
-        "https://www.portalminero.com/display/acce/Muro+de+Actividades",
-    ]
+    LOGIN_URL   = "https://www.portalminero.com/login.action"
+    BASE_URL    = "https://www.portalminero.com"
+    FUENTE_WP   = "https://www.portalminero.com/wp/oportunidades-de-negocios/"
+    FUENTE_MURO = "https://www.portalminero.com/display/acce/Muro+de+Actividades"
 
     # ──────────────────────────────────────────────────────────────
     # LOGIN
@@ -287,356 +301,236 @@ class PortalMinero(PortalBase):
 
     def login(self) -> None:
         self.logger.info("[Portal Minero] Iniciando sesión...")
-        cfg_portal = self.cfg["portales"]["portal_minero"]
-        usuario    = cfg_portal["usuario"]
-        password   = cfg_portal["password"]
+        cfg    = self.cfg["portales"]["portal_minero"]
+        wait   = WebDriverWait(self.driver, self.timeout)
 
         self.driver.get(self.LOGIN_URL)
-        wait = WebDriverWait(self.driver, self.timeout)
 
-        # Esperar formulario Seraph (sin comas en selector — C1)
-        found = False
-        for sel in ["#os_username", "input[name='os_username']", "#username"]:
-            try:
-                wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, sel)))
-                found = True
-                break
-            except TimeoutException:
-                continue
-        if not found:
-            _guardar_screenshot(self.driver, "pm_error_login_page.png", self.logger)
-            raise RuntimeError("[Portal Minero] Página de login no cargó en %ds." % self.timeout)
-
-        CAMPOS_USER = [
-            (By.ID,   "os_username"),
-            (By.NAME, "os_username"),
-            (By.ID,   "username"),
-            (By.NAME, "username"),
-            (By.CSS_SELECTOR, "input[type='text']:not([disabled])"),
-        ]
-        CAMPOS_PASS = [
-            (By.ID,   "os_password"),
-            (By.NAME, "os_password"),
-            (By.ID,   "password"),
-            (By.NAME, "password"),
-            (By.CSS_SELECTOR, "input[type='password']:not([disabled])"),
-        ]
-        CAMPOS_BTN = [
-            (By.ID,   "loginButton"),
-            (By.CSS_SELECTOR, "input#loginButton"),
-            (By.CSS_SELECTOR, "button#loginButton"),
-            (By.CSS_SELECTOR, "input[type='submit']"),
-            (By.CSS_SELECTOR, "button[type='submit']"),
-            (By.XPATH, "//input[@value='Iniciar sesión']"),
-            (By.XPATH, "//input[@value='Log In']"),
-        ]
-
-        campo_user = self._encontrar_elemento(CAMPOS_USER)
-        campo_pass = self._encontrar_elemento(CAMPOS_PASS)
-
-        if not campo_user or not campo_pass:
-            _guardar_screenshot(self.driver, "pm_error_campos.png", self.logger)
-            raise RuntimeError("[Portal Minero] No se encontraron los campos usuario/contraseña.")
-
-        self.driver.execute_script("arguments[0].value = '';", campo_user)
-        campo_user.send_keys(usuario)
-        self.driver.execute_script("arguments[0].value = '';", campo_pass)
-        campo_pass.send_keys(password)
-
-        btn = self._encontrar_elemento(CAMPOS_BTN)
-        if btn:
-            self.driver.execute_script("arguments[0].click();", btn)
-        else:
-            campo_pass.submit()
-
-        # Detectar login exitoso — Seraph redirige fuera de /login.action
+        # Esperar campo os_username
         try:
-            wait.until(lambda d: (
-                "login.action" not in d.current_url
-                and "login" not in d.current_url.lower().split("?")[0]
-            ))
+            wait.until(EC.presence_of_element_located((By.NAME, "os_username")))
+        except TimeoutException:
+            _guardar_screenshot(self.driver, "pm_login_error.png", self.logger)
+            raise RuntimeError("[Portal Minero] Formulario de login no cargó.")
+
+        self.driver.find_element(By.NAME, "os_username").send_keys(cfg["usuario"])
+        self.driver.find_element(By.NAME, "os_password").send_keys(cfg["password"])
+
+        # Botón submit: input[type='submit'] con name='login'
+        # (no existe #loginButton en este sitio)
+        self.driver.find_element(By.CSS_SELECTOR, "input[type='submit']").click()
+
+        # Seraph redirige fuera de /login.action al autenticar correctamente
+        try:
+            wait.until(lambda d: "login.action" not in d.current_url)
             self.logger.info("[Portal Minero] Login exitoso → %s", self.driver.current_url)
         except TimeoutException:
-            try:
-                err = self.driver.find_element(
-                    By.CSS_SELECTOR,
-                    ".aui-message-error, #loginErrorDiv, .error, [class*='error-message']"
-                )
-                msg = err.text.strip()
-            except Exception:
-                msg = "sin mensaje"
-            _guardar_screenshot(self.driver, "pm_error_redirect.png", self.logger)
-            raise RuntimeError(
-                f"[Portal Minero] Login fallido — {msg}. "
-                "Verifica usuario y contraseña en config.json."
-            )
+            msg = "—"
+            for sel in [".error", "#loginErrorDiv", ".aui-message-error"]:
+                try:
+                    msg = self.driver.find_element(By.CSS_SELECTOR, sel).text.strip()
+                    break
+                except Exception:
+                    pass
+            _guardar_screenshot(self.driver, "pm_login_failed.png", self.logger)
+            raise RuntimeError(f"[Portal Minero] Login fallido: {msg}")
 
     # ──────────────────────────────────────────────────────────────
-    # EXTRACCIÓN — itera sobre las dos fuentes
+    # EXTRACCIÓN PRINCIPAL
     # ──────────────────────────────────────────────────────────────
 
     def extraer_licitaciones(self, keywords: list, horas_atras: int) -> list:
         resultados: list = []
         vistos: set      = set()
 
-        for url in self.FUENTES:
-            self.logger.info("[Portal Minero] → %s", url)
-            try:
-                parciales = self._scrapear_fuente(url, keywords, vistos)
-                resultados.extend(parciales)
-                self.logger.info("[Portal Minero] %d resultados en %s", len(parciales), url)
-            except Exception as exc:
-                self.logger.warning("[Portal Minero] Error en %s: %s", url, exc)
-                _guardar_screenshot(self.driver, f"pm_error_{url.split('/')[-1][:20]}.png",
-                                    self.logger)
+        # Fuente 1: página pública WordPress
+        try:
+            r = self._scrapear_oportunidades(keywords, horas_atras, vistos)
+            self.logger.info("[Portal Minero] Oportunidades WP: %d relevantes", len(r))
+            resultados.extend(r)
+        except Exception as exc:
+            self.logger.warning("[Portal Minero] Error Oportunidades WP: %s", exc)
+            _guardar_screenshot(self.driver, "pm_error_wp.png", self.logger)
 
-        self.logger.info("[Portal Minero] Total: %d licitaciones relevantes.", len(resultados))
+        # Fuente 2: Muro de Actividades Confluence (requiere sesión)
+        try:
+            r = self._scrapear_muro(keywords, vistos)
+            self.logger.info("[Portal Minero] Muro Actividades: %d relevantes", len(r))
+            resultados.extend(r)
+        except Exception as exc:
+            self.logger.warning("[Portal Minero] Error Muro Actividades: %s", exc)
+            _guardar_screenshot(self.driver, "pm_error_muro.png", self.logger)
+
+        self.logger.info("[Portal Minero] Total: %d licitaciones.", len(resultados))
         return resultados
 
-    def _scrapear_fuente(self, url: str, keywords: list, vistos: set) -> list:
-        """Scrapea una URL concreta, paginando hasta agotar resultados."""
-        self.driver.get(url)
-        wait    = WebDriverWait(self.driver, self.timeout)
-        pagina  = 1
-        parcial = []
+    # ──────────────────────────────────────────────────────────────
+    # FUENTE 1 — /wp/oportunidades-de-negocios/
+    # ──────────────────────────────────────────────────────────────
 
-        # Esperar que cargue algo útil
-        time.sleep(2)
-        for sel in ["#main-content", "#content", ".entry-content",
-                    "table", ".wiki-content", "article"]:
+    def _scrapear_oportunidades(self, keywords: list, horas_atras: int,
+                                vistos: set) -> list:
+        """
+        Estructura confirmada:
+          - article[0]: contenedor con los 50 links (se omite)
+          - article[1..N]: cada oportunidad individual
+              TEXT: "Publicado en Portal Minero el: DD/MM/YYYY\n[Título]"
+              LINK: a[href*='viewpage.action']
+        """
+        self.driver.get(self.FUENTE_WP)
+        wait = WebDriverWait(self.driver, self.timeout)
+        try:
+            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "article")))
+            time.sleep(1)
+        except TimeoutException:
+            _guardar_screenshot(self.driver, "pm_error_wp_load.png", self.logger)
+            return []
+
+        articles = self.driver.find_elements(By.CSS_SELECTOR, "article")
+        # Omitir article[0] (es el contenedor general)
+        items = articles[1:] if len(articles) > 1 else articles
+        self.logger.debug("[Portal Minero] WP articles: %d", len(items))
+
+        limite = datetime.now() - timedelta(hours=horas_atras)
+        resultados = []
+
+        for art in items:
             try:
-                wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, sel)))
-                break
-            except TimeoutException:
-                continue
-
-        while True:
-            self.logger.debug("[Portal Minero] Fuente %s — página %d", url, pagina)
-            items = self._obtener_items_pagina()
-
-            if not items:
-                self.logger.info("[Portal Minero] Sin ítems en página %d de %s", pagina, url)
-                break
-
-            self.logger.debug("[Portal Minero] %d ítems detectados.", len(items))
-
-            for item in items:
-                datos = self._parsear_item(item)
-                if not datos:
-                    continue
-                texto_busqueda = (
-                    f"{datos['descripcion']} {datos['comprador']} {datos['region']}"
-                )
-                if not _es_relevante(texto_busqueda, keywords):
+                texto = art.text.strip()
+                if not texto:
                     continue
 
-                clave = datos["descripcion"][:60]
+                # Extraer fecha: "Publicado en Portal Minero el: DD/MM/YYYY"
+                fecha_pub = "—"
+                m = re.search(r'Publicado en Portal Minero el:\s*(\d{2}/\d{2}/\d{4})', texto)
+                if m:
+                    fecha_pub = m.group(1)
+                    # Filtrar por ventana de tiempo
+                    try:
+                        fdt = datetime.strptime(fecha_pub, "%d/%m/%Y")
+                        if fdt < limite:
+                            continue
+                    except ValueError:
+                        pass
+
+                # Extraer título y link del primer <a>
+                try:
+                    a    = art.find_element(By.CSS_SELECTOR, "a[href]")
+                    titulo = a.text.strip()
+                    link   = a.get_attribute("href") or ""
+                except NoSuchElementException:
+                    titulo = texto.split("\n")[-1][:200]
+                    link   = ""
+
+                if not titulo:
+                    continue
+
+                # Filtrar por keywords
+                kws = _keywords_encontrados(titulo, keywords)
+                if not kws:
+                    continue
+
+                clave = titulo[:60]
                 if clave in vistos:
                     continue
                 vistos.add(clave)
-                parcial.append(datos)
 
-            siguiente = self._siguiente_pagina(wait)
-            if not siguiente:
-                break
-            try:
-                self.driver.execute_script("arguments[0].click();", siguiente)
-                time.sleep(self.pausa)
-                pagina += 1
+                resultados.append({
+                    "portal":         self.nombre_portal,
+                    "fuente":         "Oportunidades de Negocio",
+                    "id":             "—",
+                    "comprador":      "—",
+                    "descripcion":    titulo,
+                    "region":         "—",
+                    "fecha_pub":      fecha_pub,
+                    "fecha_cierre":   "—",
+                    "link":           link,
+                    "keywords_match": kws,
+                })
+
+            except StaleElementReferenceException:
+                continue
             except Exception as exc:
-                self.logger.warning("[Portal Minero] Error paginando: %s", exc)
-                break
+                self.logger.debug("[Portal Minero] Error article: %s", exc)
 
-        return parcial
+        return resultados
 
     # ──────────────────────────────────────────────────────────────
-    # OBTENER ÍTEMS DE LA PÁGINA ACTUAL
+    # FUENTE 2 — /display/acce/Muro+de+Actividades
     # ──────────────────────────────────────────────────────────────
 
-    def _obtener_items_pagina(self) -> list:
+    def _scrapear_muro(self, keywords: list, vistos: set) -> list:
         """
-        Intenta múltiples selectores adaptados a las dos fuentes:
-        - WordPress (/wp/...): divs con clase post/entry/card o filas de tabla
-        - Confluence (/display/...): tablas .confluenceTable o #main-content
+        Estructura confirmada:
+          - .update-item: cada actividad reciente
+              TEXT: "[Título]\nactualizado hace X / actualizado ayer a las HH:MM"
+              LINK[0]: a[href*='viewpage.action'] → página de detalle
+              LINK[1]: a[href*='diffpages'] → diff de versiones (ignorar)
         """
-        SELECTORES = [
-            # ── WordPress ──────────────────────────────────────
-            ".entry-content table tbody tr",
-            "article",
-            ".post",
-            ".oportunidad",
-            ".proyecto",
-            "ul.oportunidades li",
-            "ul.proyectos li",
-            # ── Confluence ─────────────────────────────────────
-            "table.confluenceTable tbody tr",
-            "#main-content table tbody tr",
-            ".wiki-content table tbody tr",
-            "#content table tbody tr",
-            # ── Genérico ───────────────────────────────────────
-            "table tbody tr",
-        ]
-        for sel in SELECTORES:
-            items = self.driver.find_elements(By.CSS_SELECTOR, sel)
-            items = [i for i in items if i.text.strip()]
-            if items:
-                self.logger.debug("[Portal Minero] Selector: %s → %d ítems", sel, len(items))
-                return items
-        return []
-
-    # ──────────────────────────────────────────────────────────────
-    # PARSEAR ÍTEM INDIVIDUAL
-    # ──────────────────────────────────────────────────────────────
-
-    def _parsear_item(self, item) -> dict | None:
+        self.driver.get(self.FUENTE_MURO)
+        wait = WebDriverWait(self.driver, self.timeout)
         try:
-            texto = item.text.strip()
-            if not texto or len(texto) < 4:
-                return None
+            wait.until(EC.presence_of_element_located(
+                (By.CSS_SELECTOR, ".update-item")))
+            time.sleep(1)
+        except TimeoutException:
+            _guardar_screenshot(self.driver, "pm_error_muro_load.png", self.logger)
+            return []
 
-            tag = item.tag_name.lower()
+        items = self.driver.find_elements(By.CSS_SELECTOR, ".update-item")
+        self.logger.debug("[Portal Minero] Muro items: %d", len(items))
 
-            # ── Si es un div/article (WordPress) ─────────────────────────
-            if tag in ("article", "div", "li", "section"):
-                desc = texto[:200]
-                link = ""
-                try:
-                    a    = item.find_element(By.CSS_SELECTOR, "a[href]")
-                    href = a.get_attribute("href") or ""
-                    if href and not href.startswith("javascript"):
-                        link = href if href.startswith("http") else self.BASE_URL + href
-                    # Preferir el texto del enlace como descripción si es más corto y útil
-                    titulo = a.text.strip()
-                    if titulo and len(titulo) > 5:
-                        desc = titulo
-                except NoSuchElementException:
-                    pass
+        resultados = []
 
-                # Intentar extraer región/país de sub-elementos
-                region = ""
-                for cls in [".region", ".pais", ".ubicacion", ".location"]:
-                    try:
-                        region = item.find_element(By.CSS_SELECTOR, cls).text.strip()
-                        break
-                    except NoSuchElementException:
-                        pass
-
-                return {
-                    "portal":       self.nombre_portal,
-                    "id":           "—",
-                    "comprador":    "—",
-                    "descripcion":  desc,
-                    "region":       region or "—",
-                    "fecha_pub":    "—",
-                    "fecha_cierre": "—",
-                    "link":         link,
-                }
-
-            # ── Si es una fila de tabla (Confluence / tabla WP) ───────────
-            celdas = item.find_elements(By.TAG_NAME, "td")
-            n = len(celdas)
-
-            if n == 0:
-                return None  # <tr> con <th> solamente — cabecera
-
-            # Estructura real de Portal Minero: Nombre | País | Región | Ver Detalles
-            desc   = celdas[0].text.strip() if n > 0 else texto[:120]
-            pais   = celdas[1].text.strip() if n > 1 else "—"
-            region = celdas[2].text.strip() if n > 2 else "—"
-
-            # Link en col 0 (nombre) o col 3 (Ver Detalles)
-            link = ""
-            for sel in ["a[href*='/display/']", "a[href*='portalminero']",
-                        "a[href*='/wp/']", "a[href]"]:
-                try:
-                    el   = item.find_element(By.CSS_SELECTOR, sel)
-                    href = el.get_attribute("href") or ""
-                    if href and not href.startswith("javascript"):
-                        link = href if href.startswith("http") else self.BASE_URL + href
-                        break
-                except NoSuchElementException:
+        for item in items:
+            try:
+                texto = item.text.strip()
+                if not texto:
                     continue
 
-            return {
-                "portal":       self.nombre_portal,
-                "id":           "—",
-                "comprador":    pais,
-                "descripcion":  desc,
-                "region":       region,
-                "fecha_pub":    "—",
-                "fecha_cierre": "—",
-                "link":         link,
-            }
+                lineas = [l.strip() for l in texto.split("\n") if l.strip()]
+                titulo = lineas[0] if lineas else texto[:200]
 
-        except StaleElementReferenceException:
-            return None
-        except Exception as exc:
-            self.logger.debug("[Portal Minero] Error parseando item: %s", exc)
-            return None
+                # Fecha relativa (ej. "actualizado hace 2 horas")
+                fecha_rel = lineas[1] if len(lineas) > 1 else "—"
 
-    # ──────────────────────────────────────────────────────────────
-    # PAGINACIÓN
-    # ──────────────────────────────────────────────────────────────
+                # Primer link que NO sea diffpages
+                link = ""
+                for a in item.find_elements(By.CSS_SELECTOR, "a[href]"):
+                    href = a.get_attribute("href") or ""
+                    if "diffpages" not in href and href:
+                        link = href
+                        break
 
-    def _siguiente_pagina(self, wait) -> object | None:
-        """
-        Soporta:
-        1. javascript:pagina(N,1) — estilo Confluence Portal Minero
-        2. Selectores estándar de paginación (Next, siguiente, etc.)
-        3. WordPress next page links
-        """
-        # 1. Patrón javascript:pagina(N,1)
-        try:
-            enlaces = self.driver.find_elements(By.CSS_SELECTOR, "a")
-            pagina_actual  = None
-            proximo        = None
+                # Filtrar por keywords
+                kws = _keywords_encontrados(titulo, keywords)
+                if not kws:
+                    continue
 
-            for a in enlaces:
-                for fuente in [a.get_attribute("href") or "", a.get_attribute("onclick") or ""]:
-                    m = re.search(r'pagina\((\d+)\s*,\s*1\)', fuente)
-                    if m:
-                        clases = (a.get_attribute("class") or "").lower()
-                        num = int(m.group(1))
-                        if "active" in clases or "current" in clases or "selected" in clases:
-                            pagina_actual = num
-                        else:
-                            if proximo is None or num > proximo[0]:
-                                proximo = (num, a)
+                clave = titulo[:60]
+                if clave in vistos:
+                    continue
+                vistos.add(clave)
 
-            if proximo:
-                num, el = proximo
-                if pagina_actual is not None and num != pagina_actual + 1:
-                    # Buscar exactamente pagina_actual + 1
-                    for a in enlaces:
-                        for fuente in [a.get_attribute("href") or "",
-                                       a.get_attribute("onclick") or ""]:
-                            m = re.search(r'pagina\((\d+)\s*,\s*1\)', fuente)
-                            if m and int(m.group(1)) == pagina_actual + 1:
-                                return a
-                    return None
-                return el
-        except Exception as exc:
-            self.logger.debug("[Portal Minero] paginación JS: %s", exc)
+                resultados.append({
+                    "portal":         self.nombre_portal,
+                    "fuente":         "Muro de Actividades",
+                    "id":             "—",
+                    "comprador":      "—",
+                    "descripcion":    titulo,
+                    "region":         "—",
+                    "fecha_pub":      fecha_rel,
+                    "fecha_cierre":   "—",
+                    "link":           link,
+                    "keywords_match": kws,
+                })
 
-        # 2. Selectores estándar
-        for selector in [
-            "a.next",
-            "a[aria-label='Next']",
-            "a[rel='next']",
-            ".nav-previous a",
-            ".pagination li:not(.disabled) a.next",
-            "a.siguiente",
-            "a[title*='siguiente' i]",
-            "a[title*='next' i]",
-            "li.next:not(.disabled) a",
-        ]:
-            try:
-                el = self.driver.find_element(By.CSS_SELECTOR, selector)
-                if el.is_displayed() and el.is_enabled():
-                    return el
-            except NoSuchElementException:
+            except StaleElementReferenceException:
                 continue
-        return None
+            except Exception as exc:
+                self.logger.debug("[Portal Minero] Error muro item: %s", exc)
+
+        return resultados
 
     def _encontrar_elemento(self, selectors: list):
         for by, sel in selectors:
@@ -706,12 +600,14 @@ def _hoja_licitaciones(ws, licitaciones: list, keywords: list, horas_atras: int,
                        subtitulo: str | None = None) -> None:
     ws.sheet_view.showGridLines = False
 
-    borde   = _borde_oscuro()
-    aln_c   = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    aln_i   = Alignment(horizontal="left",   vertical="center", wrap_text=True)
+    borde = _borde_oscuro()
+    aln_c = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    aln_i = Alignment(horizontal="left",   vertical="center", wrap_text=True)
 
-    # ── Fila 1: Título principal ────────────────────────────────────────
-    ws.merge_cells("A1:I1")
+    NCOLS = 7  # A..G
+
+    # ── Fila 1: Título principal ─────────────────────────────────────────
+    ws.merge_cells(f"A1:{get_column_letter(NCOLS)}1")
     c = ws["A1"]
     c.value     = (f"LICITAMONITOR — SOLDESP  ·  "
                    f"{datetime.now().strftime('%d/%m/%Y %H:%M')}  ·  "
@@ -721,25 +617,27 @@ def _hoja_licitaciones(ws, licitaciones: list, keywords: list, horas_atras: int,
     c.alignment = aln_c
     ws.row_dimensions[1].height = 34
 
-    # ── Fila 2: Subtítulo / filtros ─────────────────────────────────────
-    ws.merge_cells("A2:I2")
+    # ── Fila 2: Filtros / subtítulo ──────────────────────────────────────
+    ws.merge_cells(f"A2:{get_column_letter(NCOLS)}2")
     c2 = ws["A2"]
-    if subtitulo:
-        c2.value = subtitulo
-    else:
-        c2.value = "Filtros: " + " · ".join(kw.capitalize() for kw in keywords)
+    c2.value     = subtitulo or ("Filtros: " + " · ".join(kw.capitalize() for kw in keywords))
     c2.font      = _font(italic=True, size=9, color=C_TEXT_MUTED)
     c2.fill      = _fill(C_SUBHEADER_BG)
     c2.alignment = Alignment(horizontal="center", vertical="center")
     ws.row_dimensions[2].height = 18
 
     # ── Fila 3: Cabeceras ────────────────────────────────────────────────
-    headers = ["Portal", "ID / N°", "Comprador / Mandante",
-               "Descripción / Servicio", "Región / Zona",
-               "Fecha Publicación", "Fecha Cierre", "Link Directo", "Estado"]
-    anchos  = [18,       12,          28,
-               50,                      16,
-               20,                 20,              24,              12]
+    # Columnas orientadas a evaluar si vale la pena participar
+    headers = [
+        "Fuente",           # A — Oportunidades / Muro Actividades
+        "Título / Servicio solicitado",  # B
+        "Keywords detectados",  # C
+        "Fecha Publicación",    # D
+        "Fecha Cierre",         # E
+        "Empresa / Región",     # F
+        "Link Directo",         # G
+    ]
+    anchos = [22, 60, 30, 18, 16, 22, 22]
 
     for col_i, (hdr, ancho) in enumerate(zip(headers, anchos), start=1):
         c = ws.cell(row=3, column=col_i, value=hdr)
@@ -752,63 +650,88 @@ def _hoja_licitaciones(ws, licitaciones: list, keywords: list, horas_atras: int,
 
     # ── Filas de datos ───────────────────────────────────────────────────
     if not licitaciones:
-        ws.merge_cells("A4:I4")
+        ws.merge_cells(f"A4:{get_column_letter(NCOLS)}4")
         c = ws["A4"]
-        c.value     = f"No se encontraron licitaciones en las últimas {horas_atras} horas."
+        c.value     = "No se encontraron licitaciones para los keywords configurados."
         c.font      = _font(italic=True, color=C_TEXT_MUTED)
         c.fill      = _fill(C_ROW_ODD)
         c.alignment = aln_c
         ws.row_dimensions[4].height = 28
-    else:
-        portales_colores = {}
-        for row_i, lic in enumerate(licitaciones, start=4):
-            bg = C_ROW_EVEN if row_i % 2 == 0 else C_ROW_ODD
-            fill_data = _fill(bg)
+        return
 
-            # Celda portal con color de badge
-            portal_color = _color_portal(lic["portal"])
-            c_portal = ws.cell(row=row_i, column=1, value=lic["portal"])
-            c_portal.font      = _font(bold=True, size=9, color=C_TEXT_HEADER)
-            c_portal.fill      = _fill(portal_color)
-            c_portal.alignment = aln_c
-            c_portal.border    = borde
+    for row_i, lic in enumerate(licitaciones, start=4):
+        bg        = C_ROW_EVEN if row_i % 2 == 0 else C_ROW_ODD
+        fill_data = _fill(bg)
 
-            # Resto de columnas
-            valores = [
-                lic["id"],
-                lic["comprador"],
-                lic["descripcion"],
-                lic["region"],
-                lic["fecha_pub"],
-                lic["fecha_cierre"],
-                None,            # placeholder Link
-                "Vigente",
-            ]
+        # A — Fuente (badge con color de portal)
+        fuente = lic.get("fuente", lic["portal"])
+        c_f = ws.cell(row=row_i, column=1, value=fuente)
+        c_f.font      = _font(bold=True, size=9, color=C_TEXT_HEADER)
+        c_f.fill      = _fill(_color_portal(lic["portal"]))
+        c_f.alignment = aln_c
+        c_f.border    = borde
 
-            for col_i, valor in enumerate(valores, start=2):
-                c = ws.cell(row=row_i, column=col_i, value=valor)
-                c.font      = _font(size=9, color=C_TEXT_DATA)
-                c.fill      = fill_data
-                c.border    = borde
-                c.alignment = aln_c if col_i in (2, 5, 6, 7, 9) else aln_i
+        # B — Título (texto largo, wrap)
+        c_t = ws.cell(row=row_i, column=2, value=lic["descripcion"])
+        c_t.font      = _font(size=9, color=C_TEXT_DATA, bold=True)
+        c_t.fill      = fill_data
+        c_t.alignment = aln_i
+        c_t.border    = borde
 
-            # Hipervínculo en columna 8
-            lc = ws.cell(row=row_i, column=8)
-            if lic["link"]:
-                lc.value     = "Ver licitación →"
-                lc.hyperlink = lic["link"]
-                lc.font      = _font(size=9, color=C_LINK, underline="single")
-            else:
-                lc.value = "Sin enlace"
-                lc.font  = _font(size=9, color=C_TEXT_MUTED)
-            lc.fill      = fill_data
-            lc.border    = borde
-            lc.alignment = aln_c
+        # C — Keywords detectados
+        kws = lic.get("keywords_match") or _keywords_encontrados(
+            f"{lic['descripcion']} {lic.get('comprador','')} {lic.get('region','')}",
+            keywords
+        )
+        c_k = ws.cell(row=row_i, column=3, value=kws)
+        c_k.font      = _font(size=9, color="FFD54F")  # amarillo cálido — destaca
+        c_k.fill      = fill_data
+        c_k.alignment = aln_c
+        c_k.border    = borde
 
-            ws.row_dimensions[row_i].height = 26
+        # D — Fecha publicación
+        c_fp = ws.cell(row=row_i, column=4, value=lic["fecha_pub"])
+        c_fp.font      = _font(size=9, color=C_TEXT_DATA)
+        c_fp.fill      = fill_data
+        c_fp.alignment = aln_c
+        c_fp.border    = borde
+
+        # E — Fecha cierre
+        c_fc = ws.cell(row=row_i, column=5, value=lic["fecha_cierre"])
+        c_fc.font      = _font(size=9, color=C_TEXT_DATA)
+        c_fc.fill      = fill_data
+        c_fc.alignment = aln_c
+        c_fc.border    = borde
+
+        # F — Empresa / Región
+        empresa_region = " / ".join(
+            v for v in [lic.get("comprador", ""), lic.get("region", "")]
+            if v and v != "—"
+        ) or "—"
+        c_e = ws.cell(row=row_i, column=6, value=empresa_region)
+        c_e.font      = _font(size=9, color=C_TEXT_MUTED)
+        c_e.fill      = fill_data
+        c_e.alignment = aln_i
+        c_e.border    = borde
+
+        # G — Link directo (hipervínculo)
+        c_l = ws.cell(row=row_i, column=7)
+        if lic.get("link"):
+            c_l.value     = "Ver licitación →"
+            c_l.hyperlink = lic["link"]
+            c_l.font      = _font(size=9, color=C_LINK, underline="single")
+        else:
+            c_l.value = "Sin enlace"
+            c_l.font  = _font(size=9, color=C_TEXT_MUTED)
+        c_l.fill      = fill_data
+        c_l.alignment = aln_c
+        c_l.border    = borde
+
+        # Altura dinámica según largo del título
+        ws.row_dimensions[row_i].height = min(60, max(26, len(lic["descripcion"]) // 4))
 
     ws.freeze_panes = "A4"
-    ws.auto_filter.ref = f"A3:I{3 + len(licitaciones)}"
+    ws.auto_filter.ref = f"A3:{get_column_letter(NCOLS)}{3 + len(licitaciones)}"
 
 
 def _hoja_resumen(ws, licitaciones: list, keywords: list,
