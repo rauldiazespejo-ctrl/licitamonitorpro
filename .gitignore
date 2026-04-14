@@ -1,0 +1,31 @@
+# ── Credenciales — NUNCA subir ──────────────────────────────
+config.json
+
+# ── Build / compilación ──────────────────────────────────────
+build/
+dist/
+*.build/
+*.dist/
+*.onefile-build/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.exe
+
+# ── Logs y capturas de error ─────────────────────────────────
+logs/
+*.log
+*_error_*.png
+
+# ── Distribución generada ────────────────────────────────────
+Distribucion_*/
+
+# ── macOS ────────────────────────────────────────────────────
+.DS_Store
+._*
+
+# ── IDE ──────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp

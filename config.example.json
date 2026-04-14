@@ -1,0 +1,47 @@
+{
+  "_comentario": "Copia este archivo como config.json y completa tus credenciales.",
+  "_version": "3.0",
+  "portales": {
+    "wherex": {
+      "activo": true,
+      "email": "TU_EMAIL@empresa.com",
+      "password": "TU_PASSWORD_WHEREX"
+    },
+    "portal_minero": {
+      "activo": true,
+      "usuario": "TU_USUARIO_PORTALMINERO",
+      "password": "TU_PASSWORD_PORTALMINERO"
+    }
+  },
+  "rutas": {
+    "output_dir": "C:\\Users\\Public\\Documents\\LicitaMonitor",
+    "log_dir": "C:\\Users\\Public\\Documents\\LicitaMonitor\\logs"
+  },
+  "filtros": {
+    "horas_atras": 24,
+    "keywords": [
+      "estructura", "caldereria", "caldería",
+      "piping", "fabricacion", "fabricación",
+      "montaje", "spool", "pipeline", "manifold",
+      "tk", "estanques", "soldadura"
+    ]
+  },
+  "selenium": {
+    "headless": true,
+    "timeout_segundos": 30,
+    "max_reintentos": 3,
+    "pausa_entre_paginas": 2
+  },
+  "notificaciones": {
+    "activar_email": false,
+    "smtp_servidor": "smtp.gmail.com",
+    "smtp_puerto": 587,
+    "smtp_usuario": "",
+    "smtp_password": "",
+    "destinatarios": []
+  },
+  "tarea_programada": {
+    "hora": "15:00",
+    "nombre": "LicitaMonitor Soldesp"
+  }
+}

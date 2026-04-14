@@ -1,0 +1,26 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "LicitaMonitor GUI",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["LicitaMonitor_GUI.py"],
+      "port": null,
+      "description": "Abre la interfaz gráfica completa de LicitaMonitor"
+    },
+    {
+      "name": "LicitaMonitor (modo automático)",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["LicitaMonitor_GUI.py", "--auto"],
+      "port": null,
+      "description": "Ejecución silenciosa sin GUI — Programador de Tareas"
+    },
+    {
+      "name": "LicitaMonitor Core",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["LicitaMonitor.py"],
+      "port": null,
+      "description": "Ejecuta el scraper principal sin GUI"
+    }
+  ]
+}
