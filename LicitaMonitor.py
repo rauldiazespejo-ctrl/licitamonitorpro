@@ -1,14 +1,14 @@
 """
 LICITAMONITOR — Soldesp
 ========================
-Monitor multi-portal de licitaciones industriales.
-Portales soportados: Wherex · Portal Minero
+Monitor de licitaciones industriales — Portal Minero.
+Fuentes: /wp/oportunidades-de-negocios/ · /display/acce/Muro+de+Actividades
 
 REQUISITOS:
     pip install selenium openpyxl webdriver-manager requests
 
 CONFIGURACIÓN:
-    Editar config.json con credenciales de cada portal.
+    Editar config.json con credenciales de Portal Minero.
 """
 
 import json
@@ -54,7 +54,6 @@ C_ROW_ODD        = "0D1A2B"   # Filas impares
 C_RESUMEN_BG     = "0F1E30"   # Fondo hoja resumen
 C_RESUMEN_ROW    = "162840"   # Filas hoja resumen
 
-C_BADGE_WHEREX   = "1255A3"   # Azul — badge portal Wherex
 C_BADGE_MINERO   = "6B1515"   # Rojo oscuro — badge Portal Minero
 
 C_TEXT_HEADER    = "FFFFFF"   # Blanco puro — texto en cabeceras
@@ -85,13 +84,8 @@ def cargar_config() -> dict:
 def _crear_config_default(path: Path) -> None:
     config = {
         "_comentario": "Edita este archivo con tus credenciales. NO subas a GitHub.",
-        "_version": "3.0",
+        "_version": "3.1",
         "portales": {
-            "wherex": {
-                "activo": True,
-                "email": "",
-                "password": ""
-            },
             "portal_minero": {
                 "activo": True,
                 "usuario": "",
@@ -267,230 +261,32 @@ class PortalBase(ABC):
 
 
 # ═══════════════════════════════════════════════════════════════
-# PORTAL: WHEREX
-# ═══════════════════════════════════════════════════════════════
-
-class PortalWherex(PortalBase):
-    nombre_portal = "Wherex"
-    color_badge   = C_BADGE_WHEREX
-
-    LOGIN_URL = "https://login.wherex.com/?srv=system.wherex.com/secured/login_check&lang=es"
-    BIDS_URL  = ("https://system.wherex.com/secured/supplier_user/"
-                 "purchase-bids/all?bid_status=published&order=nearClosed")
-
-    def login(self) -> None:
-        self.logger.info("[Wherex] Iniciando sesión...")
-        cfg_portal = self.cfg["portales"]["wherex"]
-        email      = cfg_portal["email"]
-        password   = cfg_portal["password"]
-
-        self.driver.get(self.LOGIN_URL)
-        wait = WebDriverWait(self.driver, self.timeout)
-
-        # B5 fix: visibility_of_element_located espera que el campo sea interactuable
-        # Wherex es SPA Vue.js — los campos se inyectan luego del JS inicial
-        try:
-            wait.until(EC.visibility_of_element_located((By.ID, "inputEmail")))
-        except TimeoutException:
-            # Fallback: Vue puede usar input[type='email'] o input[name='email']
-            try:
-                wait.until(EC.visibility_of_element_located(
-                    (By.CSS_SELECTOR, "input[type='email']")))
-            except TimeoutException:
-                _guardar_screenshot(self.driver, "wherex_error_login.png", self.logger)
-                raise RuntimeError("[Wherex] Página de login no cargó. Verifica conexión.")
-
-        # Rellenar campos — probar ID primero, luego type
-        for sel_email in [(By.ID, "inputEmail"), (By.CSS_SELECTOR, "input[type='email']")]:
-            try:
-                campo = self.driver.find_element(*sel_email)
-                campo.clear(); campo.send_keys(email)
-                break
-            except NoSuchElementException:
-                continue
-
-        for sel_pass in [(By.ID, "inputPassword"), (By.CSS_SELECTOR, "input[type='password']")]:
-            try:
-                campo = self.driver.find_element(*sel_pass)
-                campo.clear(); campo.send_keys(password)
-                break
-            except NoSuchElementException:
-                continue
-
-        # Botón login
-        for sel_btn in [(By.ID, "loginEnter"), (By.CSS_SELECTOR, "button[type='submit']")]:
-            try:
-                btn = self.driver.find_element(*sel_btn)
-                self.driver.execute_script("arguments[0].scrollIntoView(true);", btn)
-                btn.click()
-                break
-            except NoSuchElementException:
-                continue
-
-        # B6 fix: redirect check más estricto
-        try:
-            wait.until(lambda d: (
-                "/secured/supplier_user" in d.current_url.lower()
-                and "login" not in d.current_url.lower()
-            ))
-            # B12 fix: espera extra para que Vue SPA termine de renderizar
-            time.sleep(1.5)
-            self.logger.info("[Wherex] Login exitoso → %s", self.driver.current_url)
-        except TimeoutException:
-            _guardar_screenshot(self.driver, "wherex_error_redirect.png", self.logger)
-            raise RuntimeError("[Wherex] Login fallido: credenciales incorrectas o sin redirección.")
-
-    def extraer_licitaciones(self, keywords: list, horas_atras: int) -> list:
-        self.logger.info("[Wherex] Extrayendo licitaciones...")
-        self.driver.get(self.BIDS_URL)
-
-        wait         = WebDriverWait(self.driver, self.timeout)
-        resultados   = []
-        vistos: set  = set()
-        pagina       = 1
-
-        # B12 fix: espera extra para Vue.js renderizar la tabla
-        time.sleep(2)
-        try:
-            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "table tbody tr")))
-        except TimeoutException:
-            _guardar_screenshot(self.driver, "wherex_error_tabla.png", self.logger)
-            self.logger.warning("[Wherex] Tabla de licitaciones no cargó.")
-            return resultados
-
-        while True:
-            self.logger.info("[Wherex] Página %d...", pagina)
-            try:
-                wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "table tbody tr")))
-            except TimeoutException:
-                break
-
-            filas = self.driver.find_elements(By.CSS_SELECTOR, "table tbody tr")
-            if not filas:
-                break
-            self.logger.debug("[Wherex] %d filas en página %d.", len(filas), pagina)
-
-            stop = False
-            for fila in filas:
-                datos = self._parsear_fila(fila)
-                if not datos:
-                    continue
-
-                if not _es_relevante(f"{datos['descripcion']} {datos['comprador']}", keywords):
-                    continue
-
-                # B7 fix: break inmediato al salir de rango para no saltar deduplicación
-                if not _dentro_de_ventana(datos["fecha_pub"], horas_atras, self.logger):
-                    stop = True
-                    break
-
-                clave = datos["id"] or datos["descripcion"][:50]
-                if clave in vistos:
-                    continue
-                vistos.add(clave)
-                resultados.append(datos)
-
-            if stop:
-                self.logger.info("[Wherex] Fechas fuera de rango — deteniendo paginación.")
-                break
-
-            # C1 fix: loop individual por selector en vez de coma-separados (inválido en Selenium)
-            btn_next = None
-            for sel in [
-                "li.page-item:not(.disabled) a[aria-label='Next']",
-                "li:not(.disabled) > a[rel='next']",
-                ".pagination .next:not(.disabled) a",
-                "button.btn-next:not([disabled])",
-                "a[aria-label='Next']",
-            ]:
-                try:
-                    btn_next = WebDriverWait(self.driver, 3).until(
-                        EC.element_to_be_clickable((By.CSS_SELECTOR, sel))
-                    )
-                    break
-                except (TimeoutException, NoSuchElementException):
-                    continue
-
-            if not btn_next:
-                self.logger.info("[Wherex] Sin más páginas.")
-                break
-            try:
-                btn_next.click()
-                time.sleep(self.pausa)
-                pagina += 1
-            except Exception as exc:
-                self.logger.warning("[Wherex] Error en paginación: %s", exc)
-                break
-
-        self.logger.info("[Wherex] %d licitaciones encontradas.", len(resultados))
-        return resultados
-
-    def _parsear_fila(self, fila) -> dict | None:
-        try:
-            celdas = fila.find_elements(By.TAG_NAME, "td")
-            if not fila.text.strip() or len(celdas) < 2:
-                return None
-
-            # Wherex tabla: col0=N°, col1=Título, col2=Comprador, col3=Producto/Servicio
-            # col4=Monto, col5=Zona, col6=F.Publicación, col7=F.Cierre
-            numero    = celdas[0].text.strip() if len(celdas) > 0 else "—"
-            comprador = celdas[2].text.strip() if len(celdas) > 2 else "—"
-            producto  = celdas[3].text.strip() if len(celdas) > 3 else \
-                        celdas[1].text.strip() if len(celdas) > 1 else "—"
-            zona      = celdas[5].text.strip() if len(celdas) > 5 else "—"
-            fecha_pub = celdas[6].text.strip() if len(celdas) > 6 else "—"
-            fecha_cie = celdas[7].text.strip() if len(celdas) > 7 else "—"
-
-            # B8 fix: selectores de link más precisos
-            link = ""
-            for sel in ["a[href*='/purchase-bid']", "a[href*='/purchase-bids/']", "a[href]"]:
-                try:
-                    el = fila.find_element(By.CSS_SELECTOR, sel)
-                    link = el.get_attribute("href") or ""
-                    if link:
-                        break
-                except NoSuchElementException:
-                    continue
-
-            if not link and numero and numero != "—":
-                link = (f"https://system.wherex.com/secured/supplier_user"
-                        f"/purchase-bids/{numero}")
-
-            return {
-                "portal":       self.nombre_portal,
-                "id":           numero,
-                "comprador":    comprador,
-                "descripcion":  producto,
-                "region":       zona,
-                "fecha_pub":    fecha_pub,
-                "fecha_cierre": fecha_cie,
-                "link":         link,
-            }
-        except StaleElementReferenceException:
-            return None
-        except Exception as exc:
-            self.logger.debug("[Wherex] Error fila: %s", exc)
-            return None
-
-
-# ═══════════════════════════════════════════════════════════════
-# PORTAL: PORTAL MINERO  (Atlassian Confluence)
-# Login: https://www.portalminero.com/login.action
-# Licitaciones: /display/serv/Listado+de+Proyectos
+# PORTAL: PORTAL MINERO
+# Login:   https://www.portalminero.com/login.action  (Confluence Seraph)
+# Fuente 1: /wp/oportunidades-de-negocios/            (WordPress)
+# Fuente 2: /display/acce/Muro+de+Actividades         (Confluence)
 # ═══════════════════════════════════════════════════════════════
 
 class PortalMinero(PortalBase):
     nombre_portal = "Portal Minero"
     color_badge   = C_BADGE_MINERO
-    tiene_fechas  = False   # C4: la tabla no tiene columna de fecha
+    tiene_fechas  = False   # ninguna de las dos fuentes tiene columna de fecha fiable
 
-    # URL base sin parámetros de campaña — el portal redirige sólo al destino correcto
     LOGIN_URL  = "https://www.portalminero.com/login.action"
-    BIDS_URL   = "https://www.portalminero.com/display/serv/Listado+de+Proyectos"
     BASE_URL   = "https://www.portalminero.com"
 
+    # Las dos fuentes de licitaciones a scrapear
+    FUENTES = [
+        "https://www.portalminero.com/wp/oportunidades-de-negocios/",
+        "https://www.portalminero.com/display/acce/Muro+de+Actividades",
+    ]
+
+    # ──────────────────────────────────────────────────────────────
+    # LOGIN
+    # ──────────────────────────────────────────────────────────────
+
     def login(self) -> None:
-        self.logger.info("[Portal Minero] Iniciando sesión (Confluence)...")
+        self.logger.info("[Portal Minero] Iniciando sesión...")
         cfg_portal = self.cfg["portales"]["portal_minero"]
         usuario    = cfg_portal["usuario"]
         password   = cfg_portal["password"]
@@ -498,7 +294,7 @@ class PortalMinero(PortalBase):
         self.driver.get(self.LOGIN_URL)
         wait = WebDriverWait(self.driver, self.timeout)
 
-        # ── Esperar formulario Confluence (C1: sin comas en selector) ────
+        # Esperar formulario Seraph (sin comas en selector — C1)
         found = False
         for sel in ["#os_username", "input[name='os_username']", "#username"]:
             try:
@@ -511,7 +307,6 @@ class PortalMinero(PortalBase):
             _guardar_screenshot(self.driver, "pm_error_login_page.png", self.logger)
             raise RuntimeError("[Portal Minero] Página de login no cargó en %ds." % self.timeout)
 
-        # ── Campos (Confluence estándar + fallbacks) ─────────────────────
         CAMPOS_USER = [
             (By.ID,   "os_username"),
             (By.NAME, "os_username"),
@@ -534,7 +329,6 @@ class PortalMinero(PortalBase):
             (By.CSS_SELECTOR, "button[type='submit']"),
             (By.XPATH, "//input[@value='Iniciar sesión']"),
             (By.XPATH, "//input[@value='Log In']"),
-            (By.XPATH, "//button[normalize-space()='Iniciar sesión']"),
         ]
 
         campo_user = self._encontrar_elemento(CAMPOS_USER)
@@ -544,7 +338,6 @@ class PortalMinero(PortalBase):
             _guardar_screenshot(self.driver, "pm_error_campos.png", self.logger)
             raise RuntimeError("[Portal Minero] No se encontraron los campos usuario/contraseña.")
 
-        # Limpiar y rellenar con JS para evitar autocompletado problemático
         self.driver.execute_script("arguments[0].value = '';", campo_user)
         campo_user.send_keys(usuario)
         self.driver.execute_script("arguments[0].value = '';", campo_pass)
@@ -556,8 +349,7 @@ class PortalMinero(PortalBase):
         else:
             campo_pass.submit()
 
-        # ── Detectar login exitoso ────────────────────────────────────────
-        # Confluence redirige fuera de /login.action al autenticar
+        # Detectar login exitoso — Seraph redirige fuera de /login.action
         try:
             wait.until(lambda d: (
                 "login.action" not in d.current_url
@@ -565,7 +357,6 @@ class PortalMinero(PortalBase):
             ))
             self.logger.info("[Portal Minero] Login exitoso → %s", self.driver.current_url)
         except TimeoutException:
-            # Verificar si hay mensaje de error visible
             try:
                 err = self.driver.find_element(
                     By.CSS_SELECTOR,
@@ -580,133 +371,183 @@ class PortalMinero(PortalBase):
                 "Verifica usuario y contraseña en config.json."
             )
 
+    # ──────────────────────────────────────────────────────────────
+    # EXTRACCIÓN — itera sobre las dos fuentes
+    # ──────────────────────────────────────────────────────────────
+
     def extraer_licitaciones(self, keywords: list, horas_atras: int) -> list:
-        self.logger.info("[Portal Minero] Accediendo a listado de proyectos...")
-        self.driver.get(self.BIDS_URL)
+        resultados: list = []
+        vistos: set      = set()
 
-        wait        = WebDriverWait(self.driver, self.timeout)
-        resultados  = []
-        vistos: set = set()
-        pagina      = 1
+        for url in self.FUENTES:
+            self.logger.info("[Portal Minero] → %s", url)
+            try:
+                parciales = self._scrapear_fuente(url, keywords, vistos)
+                resultados.extend(parciales)
+                self.logger.info("[Portal Minero] %d resultados en %s", len(parciales), url)
+            except Exception as exc:
+                self.logger.warning("[Portal Minero] Error en %s: %s", url, exc)
+                _guardar_screenshot(self.driver, f"pm_error_{url.split('/')[-1][:20]}.png",
+                                    self.logger)
 
-        # ── Esperar contenido Confluence ─────────────────────────────────
-        # El listado de proyectos en Confluence suele estar en #main-content
-        # o dentro de tablas/macros de Confluence
-        try:
-            wait.until(EC.presence_of_element_located(
-                (By.CSS_SELECTOR,
-                 "#main-content, #content, .wiki-content, table.confluenceTable, "
-                 ".page-metadata-modification-info")
-            ))
-            time.sleep(2)  # Dar tiempo al JS de Confluence
-        except TimeoutException:
-            _guardar_screenshot(self.driver, "pm_error_lista.png", self.logger)
-            self.logger.warning("[Portal Minero] Página de proyectos no cargó. ¿Sesión expirada?")
-            return resultados
+        self.logger.info("[Portal Minero] Total: %d licitaciones relevantes.", len(resultados))
+        return resultados
+
+    def _scrapear_fuente(self, url: str, keywords: list, vistos: set) -> list:
+        """Scrapea una URL concreta, paginando hasta agotar resultados."""
+        self.driver.get(url)
+        wait    = WebDriverWait(self.driver, self.timeout)
+        pagina  = 1
+        parcial = []
+
+        # Esperar que cargue algo útil
+        time.sleep(2)
+        for sel in ["#main-content", "#content", ".entry-content",
+                    "table", ".wiki-content", "article"]:
+            try:
+                wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, sel)))
+                break
+            except TimeoutException:
+                continue
 
         while True:
-            self.logger.info("[Portal Minero] Página %d...", pagina)
-
+            self.logger.debug("[Portal Minero] Fuente %s — página %d", url, pagina)
             items = self._obtener_items_pagina()
+
             if not items:
-                self.logger.info("[Portal Minero] Sin ítems detectados en página %d.", pagina)
+                self.logger.info("[Portal Minero] Sin ítems en página %d de %s", pagina, url)
                 break
 
-            self.logger.debug("[Portal Minero] %d filas detectadas.", len(items))
+            self.logger.debug("[Portal Minero] %d ítems detectados.", len(items))
 
             for item in items:
                 datos = self._parsear_item(item)
                 if not datos:
                     continue
-                if not _es_relevante(
-                    f"{datos['descripcion']} {datos['comprador']} {datos['region']}",
-                    keywords
-                ):
-                    continue
-                # C4: Portal Minero no tiene columna de fecha — saltar filtro temporal
-                if self.tiene_fechas and not _dentro_de_ventana(
-                    datos["fecha_pub"], horas_atras, self.logger
-                ):
+                texto_busqueda = (
+                    f"{datos['descripcion']} {datos['comprador']} {datos['region']}"
+                )
+                if not _es_relevante(texto_busqueda, keywords):
                     continue
 
-                clave = datos["id"] or datos["descripcion"][:50]
+                clave = datos["descripcion"][:60]
                 if clave in vistos:
                     continue
                 vistos.add(clave)
-                resultados.append(datos)
+                parcial.append(datos)
 
-            # Paginación Confluence (macro de tabla paginada o "siguiente" link)
             siguiente = self._siguiente_pagina(wait)
             if not siguiente:
-                self.logger.info("[Portal Minero] Sin más páginas.")
                 break
             try:
                 self.driver.execute_script("arguments[0].click();", siguiente)
                 time.sleep(self.pausa)
                 pagina += 1
             except Exception as exc:
-                self.logger.warning("[Portal Minero] Error avanzando página: %s", exc)
+                self.logger.warning("[Portal Minero] Error paginando: %s", exc)
                 break
 
-        self.logger.info("[Portal Minero] %d licitaciones relevantes.", len(resultados))
-        return resultados
+        return parcial
+
+    # ──────────────────────────────────────────────────────────────
+    # OBTENER ÍTEMS DE LA PÁGINA ACTUAL
+    # ──────────────────────────────────────────────────────────────
 
     def _obtener_items_pagina(self) -> list:
         """
-        Portal Minero usa Confluence — el contenido está en tablas .confluenceTable
-        o dentro de #main-content. Intenta múltiples selectores en orden de prioridad.
+        Intenta múltiples selectores adaptados a las dos fuentes:
+        - WordPress (/wp/...): divs con clase post/entry/card o filas de tabla
+        - Confluence (/display/...): tablas .confluenceTable o #main-content
         """
         SELECTORES = [
-            # Tablas Confluence (más específico primero)
+            # ── WordPress ──────────────────────────────────────
+            ".entry-content table tbody tr",
+            "article",
+            ".post",
+            ".oportunidad",
+            ".proyecto",
+            "ul.oportunidades li",
+            "ul.proyectos li",
+            # ── Confluence ─────────────────────────────────────
             "table.confluenceTable tbody tr",
             "#main-content table tbody tr",
             ".wiki-content table tbody tr",
             "#content table tbody tr",
-            # Fallback genérico
+            # ── Genérico ───────────────────────────────────────
             "table tbody tr",
-            # Posibles cards/divs si usan macro visual
-            ".project-item",
-            ".licitacion-row",
-            "ul.project-list li",
         ]
         for sel in SELECTORES:
             items = self.driver.find_elements(By.CSS_SELECTOR, sel)
-            # B9: no filtrar por <th> — solo quitar filas completamente vacías
             items = [i for i in items if i.text.strip()]
             if items:
-                self.logger.debug("[Portal Minero] Selector activo: %s (%d items)", sel, len(items))
+                self.logger.debug("[Portal Minero] Selector: %s → %d ítems", sel, len(items))
                 return items
         return []
 
+    # ──────────────────────────────────────────────────────────────
+    # PARSEAR ÍTEM INDIVIDUAL
+    # ──────────────────────────────────────────────────────────────
+
     def _parsear_item(self, item) -> dict | None:
-        """
-        C2: Estructura real de la tabla de Portal Minero (4 columnas):
-          col 0 — Nombre del proyecto (con <a> al detalle)
-          col 1 — País
-          col 2 — Región
-          col 3 — Ver Detalles (botón/link al detalle)
-        Sin columnas de fecha — tiene_fechas = False.
-        """
         try:
             texto = item.text.strip()
             if not texto or len(texto) < 4:
                 return None
 
+            tag = item.tag_name.lower()
+
+            # ── Si es un div/article (WordPress) ─────────────────────────
+            if tag in ("article", "div", "li", "section"):
+                desc = texto[:200]
+                link = ""
+                try:
+                    a    = item.find_element(By.CSS_SELECTOR, "a[href]")
+                    href = a.get_attribute("href") or ""
+                    if href and not href.startswith("javascript"):
+                        link = href if href.startswith("http") else self.BASE_URL + href
+                    # Preferir el texto del enlace como descripción si es más corto y útil
+                    titulo = a.text.strip()
+                    if titulo and len(titulo) > 5:
+                        desc = titulo
+                except NoSuchElementException:
+                    pass
+
+                # Intentar extraer región/país de sub-elementos
+                region = ""
+                for cls in [".region", ".pais", ".ubicacion", ".location"]:
+                    try:
+                        region = item.find_element(By.CSS_SELECTOR, cls).text.strip()
+                        break
+                    except NoSuchElementException:
+                        pass
+
+                return {
+                    "portal":       self.nombre_portal,
+                    "id":           "—",
+                    "comprador":    "—",
+                    "descripcion":  desc,
+                    "region":       region or "—",
+                    "fecha_pub":    "—",
+                    "fecha_cierre": "—",
+                    "link":         link,
+                }
+
+            # ── Si es una fila de tabla (Confluence / tabla WP) ───────────
             celdas = item.find_elements(By.TAG_NAME, "td")
             n = len(celdas)
 
             if n == 0:
-                return None  # fila de encabezado con <th>
+                return None  # <tr> con <th> solamente — cabecera
 
-            # Mapeo correcto según estructura real de 4 columnas
-            desc      = celdas[0].text.strip() if n > 0 else texto[:120]
-            pais      = celdas[1].text.strip() if n > 1 else "—"
-            region    = celdas[2].text.strip() if n > 2 else "—"
-            # col 3 es solo "Ver Detalles" — no tiene info adicional útil
+            # Estructura real de Portal Minero: Nombre | País | Región | Ver Detalles
+            desc   = celdas[0].text.strip() if n > 0 else texto[:120]
+            pais   = celdas[1].text.strip() if n > 1 else "—"
+            region = celdas[2].text.strip() if n > 2 else "—"
 
-            # ── Link: puede estar en col 0 (nombre) o col 3 (Ver Detalles) ──
+            # Link en col 0 (nombre) o col 3 (Ver Detalles)
             link = ""
-            for sel in ["a[href*='/display/']", "a[href*='portalminero']", "a[href]"]:
+            for sel in ["a[href*='/display/']", "a[href*='portalminero']",
+                        "a[href*='/wp/']", "a[href]"]:
                 try:
                     el   = item.find_element(By.CSS_SELECTOR, sel)
                     href = el.get_attribute("href") or ""
@@ -719,7 +560,7 @@ class PortalMinero(PortalBase):
             return {
                 "portal":       self.nombre_portal,
                 "id":           "—",
-                "comprador":    pais,        # usamos "comprador" para País (más visible en Excel)
+                "comprador":    pais,
                 "descripcion":  desc,
                 "region":       region,
                 "fecha_pub":    "—",
@@ -733,65 +574,58 @@ class PortalMinero(PortalBase):
             self.logger.debug("[Portal Minero] Error parseando item: %s", exc)
             return None
 
-    def _extraer_attr(self, parent, selector: str, attr: str) -> str:
-        try:
-            el = parent.find_element(By.CSS_SELECTOR, selector)
-            return el.text.strip() if attr == "text" else (el.get_attribute(attr) or "")
-        except Exception:
-            return ""
+    # ──────────────────────────────────────────────────────────────
+    # PAGINACIÓN
+    # ──────────────────────────────────────────────────────────────
 
     def _siguiente_pagina(self, wait) -> object | None:
         """
-        C3: Portal Minero usa paginación JS vía javascript:pagina(N,1).
-        Detectamos el link de la página siguiente y lo ejecutamos directamente.
-        Devuelve el elemento clickable o None si no hay más páginas.
+        Soporta:
+        1. javascript:pagina(N,1) — estilo Confluence Portal Minero
+        2. Selectores estándar de paginación (Next, siguiente, etc.)
+        3. WordPress next page links
         """
-        # 1. Buscar links con onclick o href tipo javascript:pagina(N,1)
+        # 1. Patrón javascript:pagina(N,1)
         try:
             enlaces = self.driver.find_elements(By.CSS_SELECTOR, "a")
-            pagina_actual = None
-            proximo_pagina = None
+            pagina_actual  = None
+            proximo        = None
 
             for a in enlaces:
-                href = a.get_attribute("href") or ""
-                onclick = a.get_attribute("onclick") or ""
-                texto_a = a.text.strip()
-
-                # Detectar patrón javascript:pagina(N,1)
-                for fuente in [href, onclick]:
+                for fuente in [a.get_attribute("href") or "", a.get_attribute("onclick") or ""]:
                     m = re.search(r'pagina\((\d+)\s*,\s*1\)', fuente)
                     if m:
-                        # El link con clase "active" o "current" es la página actual
                         clases = (a.get_attribute("class") or "").lower()
+                        num = int(m.group(1))
                         if "active" in clases or "current" in clases or "selected" in clases:
-                            pagina_actual = int(m.group(1))
+                            pagina_actual = num
                         else:
-                            # Guardar el candidato a "siguiente" (mayor número)
-                            n = int(m.group(1))
-                            if proximo_pagina is None or n > proximo_pagina[0]:
-                                proximo_pagina = (n, a, fuente)
+                            if proximo is None or num > proximo[0]:
+                                proximo = (num, a)
 
-            if proximo_pagina:
-                n, el, fuente = proximo_pagina
-                # Si tenemos página actual, solo avanzar exactamente 1
-                if pagina_actual is not None and n != pagina_actual + 1:
-                    # Buscar específicamente la página actual + 1
+            if proximo:
+                num, el = proximo
+                if pagina_actual is not None and num != pagina_actual + 1:
+                    # Buscar exactamente pagina_actual + 1
                     for a in enlaces:
-                        for fuente2 in [a.get_attribute("href") or "", a.get_attribute("onclick") or ""]:
-                            m = re.search(r'pagina\((\d+)\s*,\s*1\)', fuente2)
+                        for fuente in [a.get_attribute("href") or "",
+                                       a.get_attribute("onclick") or ""]:
+                            m = re.search(r'pagina\((\d+)\s*,\s*1\)', fuente)
                             if m and int(m.group(1)) == pagina_actual + 1:
                                 return a
                     return None
                 return el
         except Exception as exc:
-            self.logger.debug("[Portal Minero] _siguiente_pagina JS: %s", exc)
+            self.logger.debug("[Portal Minero] paginación JS: %s", exc)
 
-        # 2. Fallback: selectores estándar de paginación
+        # 2. Selectores estándar
         for selector in [
-            "a[aria-label='Next']:not(.disabled)",
+            "a.next",
+            "a[aria-label='Next']",
             "a[rel='next']",
+            ".nav-previous a",
             ".pagination li:not(.disabled) a.next",
-            "a.siguiente:not(.disabled)",
+            "a.siguiente",
             "a[title*='siguiente' i]",
             "a[title*='next' i]",
             "li.next:not(.disabled) a",
@@ -1034,7 +868,6 @@ def _hoja_resumen(ws, licitaciones: list, keywords: list,
 
 def _color_portal(nombre: str) -> str:
     tabla = {
-        "Wherex":        C_BADGE_WHEREX,
         "Portal Minero": C_BADGE_MINERO,
     }
     return tabla.get(nombre, "1B3A6B")
@@ -1085,7 +918,6 @@ def enviar_email(cfg_notif: dict, filepath: str, n_lics: int, logger: logging.Lo
 # ═══════════════════════════════════════════════════════════════
 
 PORTAL_MAP = {
-    "wherex":        PortalWherex,
     "portal_minero": PortalMinero,
 }
 
