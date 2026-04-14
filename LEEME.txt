@@ -1,0 +1,108 @@
+=====================================================
+  LICITAMONITOR — Guia de instalacion
+  Version 3.2 · Soldesp · Portal Minero
+=====================================================
+
+QUE HACE ESTA APLICACION
+==========================
+LicitaMonitor busca automáticamente licitaciones
+relevantes en Portal Minero y genera un archivo
+Excel con los resultados, incluyendo un link directo
+a cada licitación para evaluar si vale la pena
+participar.
+
+Fuentes que monitorea:
+  · Oportunidades de Negocio (últimas 50 publicadas)
+  · Muro de Actividades (actualizaciones recientes)
+
+Palabras clave configuradas:
+  estructura, caldereria, piping, fabricacion,
+  montaje, spool, pipeline, manifold, tk,
+  estanques, soldadura
+
+
+REQUISITO PREVIO — OBLIGATORIO
+================================
+Google Chrome debe estar instalado en el equipo.
+Descárgalo desde: https://www.google.com/chrome/
+
+
+INSTALACION (primera vez)
+===========================
+
+  1. Copia la carpeta completa del pendrive
+     a cualquier lugar del equipo, por ejemplo:
+     C:\LicitaMonitor\
+
+  2. Haz DOBLE CLIC en:  INSTALAR.bat
+
+     Este script instalará automáticamente:
+       - Python 3.12 (si no está instalado)
+       - Todas las dependencias necesarias
+       - Un acceso directo en el Escritorio
+
+     Requiere conexión a internet la primera vez.
+     Puede tardar 3-5 minutos.
+
+  3. Si Windows muestra advertencia de seguridad:
+     → Clic en "Más información"
+     → Clic en "Ejecutar de todas formas"
+
+
+USO DIARIO
+===========
+  · Doble clic en el acceso directo "LicitaMonitor"
+    del Escritorio.
+
+  · O ejecutar: C:\LicitaMonitor\Abrir_LicitaMonitor.bat
+
+
+CONFIGURACION
+==============
+Las credenciales están en:
+  C:\LicitaMonitor\config.json
+
+Abre ese archivo con el Bloc de notas para cambiar:
+  - usuario y contraseña de Portal Minero
+  - carpeta donde guardar los Excel
+  - período de búsqueda (horas atrás)
+
+
+EJECUCION AUTOMATICA DIARIA
+=============================
+Dentro de la aplicación, en el panel inferior
+"Programador de Tareas (Windows)":
+
+  → Clic en "Instalar tarea (15:00)"
+
+Esto ejecutará LicitaMonitor automáticamente
+cada día a las 15:00 sin necesidad de abrirlo.
+
+NOTA: Para instalar la tarea es posible que necesites
+ejecutar como Administrador (clic derecho → Ejecutar
+como administrador).
+
+
+PROBLEMAS FRECUENTES
+=====================
+La app no abre:
+  → Verifica que Python esté instalado (ejecuta INSTALAR.bat de nuevo)
+  → Verifica que C:\LicitaMonitor\config.json existe
+
+Chrome no encontrado / error ChromeDriver:
+  → Instala Google Chrome (versión actual)
+  → El equipo necesita acceso a internet
+
+No encuentra licitaciones:
+  → Verifica usuario y contraseña en config.json
+  → Prueba con período más amplio (Últimos 3 meses)
+
+Antivirus bloquea algo:
+  → Agrega C:\LicitaMonitor\ como excepción en el antivirus
+
+
+SOPORTE
+========
+Contacta al equipo de desarrollo de Soldesp.
+
+=====================================================

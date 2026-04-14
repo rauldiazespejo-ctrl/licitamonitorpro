@@ -1,6 +1,7 @@
 @echo off
 :: ============================================================
 ::  BUILD — LicitaMonitor Soldesp
+::  Compila un .exe autónomo con PyInstaller.
 ::  Ejecutar en el equipo Windows donde se compila.
 ::  Requiere Python 3.10+ y Google Chrome instalado.
 :: ============================================================
@@ -10,20 +11,21 @@ set "SCRIPT_DIR=%~dp0"
 cd /d "%SCRIPT_DIR%"
 
 echo.
-echo  =====================================================
-echo   LICITAMONITOR — Compilacion del ejecutable
-echo  =====================================================
+echo  ╔══════════════════════════════════════════════════════╗
+echo  ║     LICITAMONITOR — Compilacion del ejecutable      ║
+echo  ║             Portal Minero · v3.2                    ║
+echo  ╚══════════════════════════════════════════════════════╝
 echo.
 
-:: ── 1. Verificar Python ────────────────────────────────────
+:: ── 1. Verificar Python ─────────────────────────────────────
 python --version >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] Python no encontrado. Instala Python 3.10+ desde python.org
     pause & exit /b 1
 )
-echo [OK] Python: & python --version
+echo [OK] & python --version
 
-:: ── 2. Instalar dependencias ──────────────────────────────
+:: ── 2. Instalar dependencias ────────────────────────────────
 echo.
 echo [INFO] Instalando dependencias...
 python -m pip install --upgrade pip --quiet
@@ -44,7 +46,7 @@ if errorlevel 1 (
 )
 echo [OK] Dependencias listas.
 
-:: ── 3. Limpiar builds anteriores ──────────────────────────
+:: ── 3. Limpiar builds anteriores ────────────────────────────
 echo.
 echo [INFO] Limpiando builds anteriores...
 for %%D in (build dist __pycache__ LicitaMonitor.build LicitaMonitor.dist) do (
@@ -52,7 +54,7 @@ for %%D in (build dist __pycache__ LicitaMonitor.build LicitaMonitor.dist) do (
 )
 echo [OK] Limpieza completada.
 
-:: ── 4. Compilar ───────────────────────────────────────────
+:: ── 4. Compilar ─────────────────────────────────────────────
 echo.
 echo [INFO] Compilando LicitaMonitor.exe ...
 echo        (puede tardar 3-6 minutos)
@@ -60,14 +62,12 @@ echo.
 pyinstaller LicitaMonitor.spec --noconfirm --clean
 if errorlevel 1 (
     echo.
-    echo [ERROR] La compilacion fallo. Revisa los mensajes anteriores.
+    echo [ERROR] La compilacion fallo.
     pause & exit /b 1
 )
 
-:: ── 5. Verificar salida ───────────────────────────────────
+:: ── 5. Verificar salida ──────────────────────────────────────
 if not exist "LicitaMonitor.exe" (
-    echo [WARN] LicitaMonitor.exe no esta en la carpeta raiz.
-    echo        Buscando en dist\...
     if exist "dist\LicitaMonitor.exe" (
         copy /y "dist\LicitaMonitor.exe" "LicitaMonitor.exe" >nul
         echo [OK] Copiado desde dist\
@@ -77,30 +77,29 @@ if not exist "LicitaMonitor.exe" (
     )
 )
 
-:: ── 6. Crear carpeta de distribucion ──────────────────────
+:: ── 6. Crear carpeta de distribucion ────────────────────────
 echo.
 echo [INFO] Creando carpeta de distribucion...
 set "DIST_DIR=%SCRIPT_DIR%Distribucion_LicitaMonitor"
 if exist "%DIST_DIR%" rmdir /s /q "%DIST_DIR%"
 mkdir "%DIST_DIR%"
 
-copy /y "LicitaMonitor.exe"  "%DIST_DIR%\LicitaMonitor.exe"  >nul
-copy /y "config.json"        "%DIST_DIR%\config.json"        >nul
-if exist "logo.png"   copy /y "logo.png"   "%DIST_DIR%\logo.png"   >nul
-if exist "icon.ico"   copy /y "icon.ico"   "%DIST_DIR%\icon.ico"   >nul
-if exist "INSTALACION_EQUIPO_NUEVO.txt" (
-    copy /y "INSTALACION_EQUIPO_NUEVO.txt" "%DIST_DIR%\INSTALACION.txt" >nul
-)
+copy /y "LicitaMonitor.exe"   "%DIST_DIR%\LicitaMonitor.exe"   >nul
+copy /y "config.json"         "%DIST_DIR%\config.json"         >nul
+copy /y "config.example.json" "%DIST_DIR%\config.example.json" >nul
+copy /y "LEEME.txt"           "%DIST_DIR%\LEEME.txt"           >nul
+if exist "logo.png" copy /y "logo.png" "%DIST_DIR%\logo.png"   >nul
+if exist "icon.ico" copy /y "icon.ico" "%DIST_DIR%\icon.ico"   >nul
 
 echo.
-echo  =====================================================
-echo   COMPILACION EXITOSA
-echo  =====================================================
-echo.
-echo  Ejecutable : %DIST_DIR%\LicitaMonitor.exe
-echo  Config     : %DIST_DIR%\config.json
-echo.
-echo  Copia la carpeta "Distribucion_LicitaMonitor" al equipo destino.
-echo  Edita config.json si las credenciales necesitan cambios.
+echo  ╔══════════════════════════════════════════════════════╗
+echo  ║                COMPILACION EXITOSA                  ║
+echo  ╠══════════════════════════════════════════════════════╣
+echo  ║  Ejecutable : Distribucion_LicitaMonitor\           ║
+echo  ║               LicitaMonitor.exe                     ║
+echo  ║                                                     ║
+echo  ║  Copia la carpeta "Distribucion_LicitaMonitor"      ║
+echo  ║  al equipo destino o al pendrive.                   ║
+echo  ╚══════════════════════════════════════════════════════╝
 echo.
 pause
